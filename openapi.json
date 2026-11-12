@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "OrcaTerm Proxy",
+    "title": "OrcaTerm Gateway",
     "version": "0.1.0"
   },
   "paths": {

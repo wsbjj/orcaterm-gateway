@@ -1,75 +1,81 @@
 <div align="center">
 
-# OrcaTerm Proxy
+# OrcaTerm Gateway
 
-**One local OpenAI-compatible endpoint for multiple OrcaTerm accounts**
+**一个本地 OpenAI 兼容入口，轮询多个 OrcaTerm 账号**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-339933.svg)](package.json)
-[![Tests](https://img.shields.io/badge/tests-node%3Atest-black.svg)](test/proxy.test.js)
-[![API](https://img.shields.io/badge/API-OpenAI%20compatible-412991.svg)](openapi.json)
 
-English · [中文](README.zh-CN.md)
+[English](README.en.md) · 中文
 
-![Web console](docs/console.png)
+![Web 控制台](docs/console.png)
 
 </div>
 
-Bring the LightAI assistant inside Tencent Cloud OrcaTerm to any client that speaks the OpenAI Chat Completions API. Add more accounts when you need more capacity, then keep calling one local URL.
+把腾讯云 OrcaTerm 内置的 LightAI 助手接到任何支持 OpenAI Chat Completions API 的客户端。一个本地地址可以轮流使用多个你自己控制的账号。
 
 ```text
-OpenAI client  ->  localhost:8787  ->  account pool  ->  LightAI
+OpenAI 客户端  ->  localhost:8787  ->  账号池  ->  LightAI
 ```
 
-> Use this with accounts you control. The proxy does not create accounts, recover credentials, or bypass Tencent Cloud authentication.
+> 只能使用你自己控制的账号。代理不会注册账号、恢复凭证，也不会绕过腾讯云登录校验。
 
-## Changes in this branch
+## 功能
 
-Everything below was added or fixed on top of the original proxy. The point of the branch is: **you should never have to copy a cookie by hand**, and **failures should tell you what actually broke**.
+- 兼容 OpenAI 的 `POST /v1/chat/completions`，支持 JSON 和 SSE 流式响应。
+- 一键浏览器登录，自动抓取 Cookie，不用手工复制。
+- 本地多账号池，按 UIN 覆盖，按顺序轮询。
+- 支持 Cookie 字符串、浏览器 Cookie JSON、Netscape `cookies.txt` 和一行一个账号。
+- `system` 与 `developer` 指令按高优先级转发，也可用 `INJECT_SYSTEM` 追加全局指令。
+- 上游任务 JSON 收成可见回答；上游文本错误原样透出。
+- 本地用量统计与模型权限探测。
+- 双密钥访问控制：admin key 管管理面，API key 管 `/v1/*`。
+- 空响应和网关错误最多重试三次；确定性失败不重试。
 
-### Browser login (new)
+### 浏览器登录
 
-A one-click login flow that drives a real browser and captures the session itself.
+点一下按钮，驱动真实浏览器完成登录，代理自己把会话抓下来。
 
-| File | What it does |
+| 文件 | 作用 |
 | --- | --- |
-| `src/browser.js` | Finds Chrome / Edge / Chromium / Brave per platform (`CHROME_PATH` overrides). Speaks CDP over Node's native WebSocket client with a timeout on every command. Reads cookies through four fallbacks, caching whichever one works: page-level `Network.getCookies` → browser-level `Storage.getCookies` → page-level `Storage.getCookies` → browser-level `Network.getAllCookies`. |
-| `src/login.js` | `LoginManager`: three modes, a throwaway profile per launch, job state polling, transient-failure tolerance, and lifecycle logging (`[login:xxxxxxxx] …` on stdout). De-duplicates same-name cookies by domain precision, so `.cloud.tencent.com` wins over a stale `.tencent.com` copy. |
-| `src/open-login.js` | `npm run login` rewritten. The old version hard-coded `D:\workplace\…\chrome.exe` and never actually read a cookie. |
+| `src/browser.js` | 跨平台查找 Chrome / Edge / Chromium / Brave（可用 `CHROME_PATH` 覆盖）。用 Node 原生 WebSocket 连 CDP，每条指令都带超时。读 Cookie 有四级降级，成功一次就缓存该通道：页面级 `Network.getCookies` → 浏览器级 `Storage.getCookies` → 页面级 `Storage.getCookies` → 浏览器级 `Network.getAllCookies`。 |
+| `src/login.js` | `LoginManager`：三种模式、每次登录用独立临时 profile、任务状态轮询、容错重试，以及全流程日志（stdout 打 `[login:xxxxxxxx] …`）。同名 Cookie 按域精确度去重，`.cloud.tencent.com` 会盖掉过期的 `.tencent.com`。 |
+| `src/open-login.js` | `npm run login` 重写。旧版本硬编码 `D:\workplace\…\chrome.exe`，而且根本没有读取 Cookie 的逻辑。 |
 
-Three modes, selectable in the console or via `--attach` / `--launch`:
+三种模式，控制台可选，命令行用 `--attach` / `--launch`：
 
-| Mode | Behavior |
+| 模式 | 行为 |
 | --- | --- |
-| `auto` (default) | Try a new tab in your current browser; fall back to a dedicated window |
-| `attach` | Current browser only; fail with instructions if it is not reachable |
-| `launch` | Always launch a dedicated instance with a temporary profile |
+| `auto`（默认） | 先试当前浏览器的新标签页，失败回退独立窗口 |
+| `attach` | 只用当前浏览器，连不上直接报错并给出开法 |
+| `launch` | 永远用临时 profile 启动独立实例 |
 
-`attach` mode works two ways: the classic `--remote-debugging-port`, or — since that flag is **silently ignored for the default profile on Chrome 136+** — the `chrome://inspect/#remote-debugging` toggle, whose random port is discovered by reading `DevToolsActivePort` from the browser's User Data directory. In `attach` mode the proxy opens one tab, reads cookies, and closes only that tab; your browser stays untouched. In `launch` mode it uses a throwaway profile, so your daily session is never involved.
+`attach` 走两条路：经典的 `--remote-debugging-port`，或者——因为 **Chrome 136+ 已静默忽略默认 profile 的该参数**——浏览器自带的 `chrome://inspect/#remote-debugging` 开关。后者的端口是随机的，代理从浏览器 User Data 目录下的 `DevToolsActivePort` 文件里读出来。`attach` 模式只开一个标签页，抓完 Cookie 只关这个标签页，不动你的浏览器；`launch` 模式用一次性 profile，完全不碰日常登录态。
 
-New endpoints: `POST /login`, `GET /login`, `GET /login/:id`, `DELETE /login/:id`. `GET /health` now also reports the detected browser path.
+新增接口：`POST /login`、`GET /login`、`GET /login/:id`、`DELETE /login/:id`。`GET /health` 现在还会返回探测到的浏览器路径。
 
-### Usage accounting and model permissions (new)
+### 用量记账与模型权限
 
-The upstream exposes **no quota, balance, or usage API** — `/assistant/quota`, `/assistant/usage`, `/assistant/balance`, `/assistant/user`, `/assistant/models`, `/assistant/config` and `/assistant/stream/status` all return `code: 404`. So accounting is local instead.
+上游**没有任何额度 / 余额 / 用量接口**——`/assistant/quota`、`/assistant/usage`、`/assistant/balance`、`/assistant/user`、`/assistant/models`、`/assistant/config`、`/assistant/stream/status` 全部返回 `code: 404`。所以只能本地记账。
 
-| File | What it does |
+| 文件 | 作用 |
 | --- | --- |
-| `src/usage.js` | `UsageStore`: requests, failures, and character counts grouped by total / model / account / day, persisted to `data/usage.json` with a 1 s write debounce. |
-| `src/probe.js` | `probeModel`: sends one minimal request per model to learn whether the account is authorized for it. |
+| `src/usage.js` | `UsageStore`：请求数、失败数、字符数，按 总计 / 模型 / 账号 / 日期 分组，持久化到 `data/usage.json`，写盘有 1 秒防抖。 |
+| `src/probe.js` | `probeModel`：给每个模型发一次极小请求，确认该账号有没有权限。 |
 
-New endpoints: `GET /usage`, `POST /models/probe`.
+新增接口：`GET /usage`、`POST /models/probe`。
 
-### Access control: admin key and API key (new)
+### 访问控制：admin key 与 API key
 
-Two keys, two jobs:
+两个 key 职责不同，别混用：
 
-| Key | Guards | Required when | Default |
+| key | 守什么 | 什么时候需要 | 默认 |
 | --- | --- | --- | --- |
-| **admin key** | The console page and every management endpoint | `remote` mode only | Generated on first start in remote mode, written to `data/config.json`, printed to the startup log |
-| **API key** | All `/v1/*` calls | Both modes | Generated on first start |
+| **admin key** | 控制台页面和所有管理接口 | 仅 `remote` 模式 | remote 模式下首次启动自动生成，写入 `data/config.json`，并打印在启动日志 |
+| **API key** | `/v1/*` 调用 | 两种模式都需要 | 首次启动自动生成 |
 
-`data/config.json`:
+配置文件 `data/config.json`：
 
 ```json
 {
@@ -81,58 +87,47 @@ Two keys, two jobs:
 }
 ```
 
-- `local` — for this machine only; the console needs no admin key.
-- `remote` — for exposing the proxy to other machines. Leave `adminKey` empty and one is generated at startup; the console then shows a login gate that requires it. Override with `ORCA_ADMIN_KEY`, or force the mode with `ORCA_MODE=remote`.
-- Management endpoints (`/accounts`, `/login`, `/usage`, `/models/probe`, `/config`) require the admin key in remote mode and are open in local mode.
-- API keys are managed in the console's "访问密钥" section: create, disable, delete, reveal, copy. Send them as `Authorization: Bearer <key>` or `x-api-key`.
-- The section also shows the current **base URL**, derived from however you reached the console — `127.0.0.1`, a LAN IP, or a reverse-proxied domain. One click copies it as the OpenAI SDK `baseURL`.
+- `local`：只给本机用，控制台不需要 admin key。
+- `remote`：要放开给别的机器时用。`adminKey` 留空会在启动时自动生成；控制台会弹登录框，输入它才能进入。也可以用环境变量 `ORCA_ADMIN_KEY` 固定，或用 `ORCA_MODE=remote` 覆盖模式。
+- 管理接口（`/accounts`、`/login`、`/usage`、`/models/probe`、`/config`）在 remote 模式下全部要求 admin key；`local` 模式直接放行。
+- API key 在控制台「访问密钥」区块管理：新建、停用、删除、复制、显示。调用时放在 `Authorization: Bearer <key>` 或 `x-api-key` 里。
+- 「访问密钥」顶部直接显示当前**接口地址**，跟着你的访问方式走：用 `127.0.0.1`、局域网 IP 还是反代域名打开控制台，显示的 `baseURL` 就是那个，点「复制」直接可用。
 
-> Lost the admin key? Read `adminKey` from `data/config.json`.
+> 忘了 admin key 就直接看 `data/config.json` 里的 `adminKey` 字段。
 
-### Bugs fixed
+## 修掉的 Bug
 
-| Symptom | Cause | Fix |
+| 现象 | 原因 | 修法 |
 | --- | --- | --- |
-| Every upstream failure showed as `上游返回空内容` | Upstream reports errors as a **plain-text** SSE frame (`data: [ERROR]: [LLM_ERROR]: 401 …`). `parseSseBlock` returned `null`, and the frame was skipped. | `sseErrorMessage()` surfaces the text; such errors are marked `noRetry` instead of being retried three times. |
-| Account stopped working after a proxy restart | `pool.save()` wrote only `id/uin/skey/p_skey`, dropping `qcmainCSRFToken`, `qcloud_uid`, `language`. | `extraCookies` are persisted and re-parsed on load. |
-| `DELETE /accounts/o<uin>` returned 404 | UINs are normalized (leading `o` stripped), so the stored id never matched the documented path. | `pool.remove()` matches id, raw uin, and normalized uin. |
-| Malformed account input returned 500 | Parse errors never set a status. | Parse failures (including invalid JSON) now return 400. |
-| `GET /upstream/status` always failed | It called `/assistant/stream/status`, which does not exist upstream. | Route removed. |
-| Hidden console sections were visible | `.login { display: flex }` overrode the `hidden` attribute. | `[hidden] { display: none !important }`. |
+| 所有上游失败都显示「上游返回空内容」 | 上游报错是**纯文本** SSE 帧（`data: [ERROR]: [LLM_ERROR]: 401 …`），`parseSseBlock` 解析成 `null` 后被直接跳过 | `sseErrorMessage()` 把文本透出来；这类错误标记 `noRetry`，不再无意义重试三次 |
+| 代理重启后账号失效 | `pool.save()` 只写 `id/uin/skey/p_skey`，把 `qcmainCSRFToken`、`qcloud_uid`、`language` 丢了 | `extraCookies` 一并持久化，加载时还原 |
+| `DELETE /accounts/o<uin>` 返回 404 | UIN 会被归一化（去掉前导 `o`），存下的 id 永远对不上文档里的路径 | `pool.remove()` 同时匹配 id、原始 uin、归一化 uin |
+| 账号格式错误返回 500 | 解析异常没设状态码 | 解析失败（含 JSON 非法）统一返回 400 |
+| `GET /upstream/status` 一直失败 | 它调的 `/assistant/stream/status` 上游根本不存在 | 删除该路由 |
+| 控制台隐藏的区块仍然显示 | `.login { display: flex }` 覆盖了 `hidden` 属性 | `[hidden] { display: none !important }` |
 
-Tests went from 4 to 10.
+`npm test` 覆盖 12 个用例。
 
-### What the upstream actually requires
+## 上游到底要什么
 
-Verified against a live account, not assumed:
+实测结论，不是推测：
 
-- **`p_skey` is not needed.** Tencent Cloud no longer issues it. The session is `uin` + `skey` on `.cloud.tencent.com`, plus `qcmainCSRFToken`, `qcloud_uid`, and `language`. A full browser cookie dump contains no `p_skey` at all. `skey` alone is sufficient; `p_skey` is used if present.
-- **Model permissions are per account.** The same account returns `401 token无访问此模型权限` for `hy3` and `hunyuan-lite`, while `hunyuan-turbos`, `deepseek-chat`, `glm-4.7`, and `qwen3` work. Use the console's "探测模型权限" button to map your own account.
-- **OAuth authorize links cannot be hand-crafted.** `state` is server-issued and single-use; a stale or self-generated one ends on `{"code":"STATE_EXPIRED"}`. The default login target is the OrcaTerm terminal page so the app starts the flow itself.
+- **不需要 `p_skey`。** 腾讯云已不再下发。会话是 `.cloud.tencent.com` 下的 `uin` + `skey`，外加 `qcmainCSRFToken`、`qcloud_uid`、`language`。把一个真实浏览器的 Cookie 全量导出，里面没有任何 `p_skey`。`skey` 单独就够用；有 `p_skey` 时会一并发送。
+- **模型权限因账号而异。** 同一个账号对 `hy3`、`hunyuan-lite` 返回 `401 token无访问此模型权限`，对 `hunyuan-turbos`、`deepseek-chat`、`glm-4.7`、`qwen3` 正常。用控制台的「探测模型权限」按钮测你自己的账号。
+- **OAuth 授权链接不能手工拼。** `state` 由服务端签发且一次性，过期或自己生成的都会停在 `{"code":"STATE_EXPIRED"}`。默认登录地址是 OrcaTerm 终端页，让应用自己发起流程。
 
-## Why this exists
+## 为什么需要它
 
-| Direct OrcaTerm session | This proxy |
+| 直接使用 OrcaTerm | 这个代理 |
 | --- | --- |
-| Works inside one browser session | Works with OpenAI SDKs and existing tools |
-| One account at a time | Round-robin across a local account pool |
-| OrcaTerm task JSON in responses | Visible answer text, with tool requests labeled |
-| Manual cookie handling | One-click browser login, plus four import formats |
+| 绑在一个浏览器会话里 | 可接入 OpenAI SDK 和现有工具 |
+| 一次手动使用一个账号 | 本地账号池轮询 |
+| 返回 OrcaTerm 任务 JSON | 返回可见回答，并标出工具请求 |
+| 手工处理 Cookie | 一键浏览器登录，另有四种导入格式 |
 
-## Features
+## 快速开始
 
-- OpenAI-compatible `POST /v1/chat/completions`, including JSON and SSE responses.
-- One-click browser login with automatic cookie capture.
-- Local multi-account pool with round-robin selection and same-UIN replacement.
-- Cookie header, browser cookie JSON, Netscape `cookies.txt`, and line-based import.
-- `system` and `developer` instructions are forwarded with priority, with optional `INJECT_SYSTEM`.
-- Upstream task JSON is reduced to its visible answer; upstream text errors are surfaced verbatim.
-- Local usage accounting and per-model permission probing.
-- Empty responses and gateway failures retry up to three times; deterministic failures do not.
-
-## Quick start
-
-Requires Node.js 22 or newer.
+需要 Node.js 22 或更新版本。
 
 ```bash
 git clone https://github.com/wsbjj/orcaterm-gateway.git
@@ -140,45 +135,45 @@ cd orcaterm-gateway
 npm start
 ```
 
-The proxy listens on [http://127.0.0.1:8787](http://127.0.0.1:8787). Open the same address for the web console.
+代理默认监听 [http://127.0.0.1:8787](http://127.0.0.1:8787)。用浏览器打开同一地址进入 Web 控制台。
 
-| Variable | Default | Purpose |
+| 变量 | 默认值 | 作用 |
 | --- | --- | --- |
-| `HOST` | `127.0.0.1` | Bind address |
-| `PORT` | `8787` | Bind port |
-| `ACCOUNTS_FILE` | `data/accounts.json` | Local account store |
-| `USAGE_FILE` | `data/usage.json` | Local usage counters |
-| `CONFIG_FILE` | `data/config.json` | Mode, admin key, API keys |
-| `ORCA_MODE` | from config | Override mode: `local` / `remote` |
-| `ORCA_ADMIN_KEY` | from config | Pin the admin key instead of generating one |
-| `INJECT_SYSTEM` | empty | Text prepended to priority instructions |
-| `CHROME_PATH` | auto-detected | Chrome / Edge / Chromium executable |
-| `CHROME_DEBUG_URL` | `http://127.0.0.1:9222` | Extra debug endpoint to try in attach mode |
+| `HOST` | `127.0.0.1` | 监听地址 |
+| `PORT` | `8787` | 监听端口 |
+| `ACCOUNTS_FILE` | `data/accounts.json` | 本地账号文件 |
+| `USAGE_FILE` | `data/usage.json` | 本地用量统计文件 |
+| `CONFIG_FILE` | `data/config.json` | 模式、admin key、API key |
+| `ORCA_MODE` | 取配置文件 | 覆盖模式：`local` / `remote` |
+| `ORCA_ADMIN_KEY` | 取配置文件 | 固定 admin key，不再自动生成 |
+| `INJECT_SYSTEM` | 空 | 加到高优先级指令前面的文本 |
+| `CHROME_PATH` | 自动查找 | Chrome / Edge / Chromium 可执行文件 |
+| `CHROME_DEBUG_URL` | `http://127.0.0.1:9222` | attach 模式额外尝试的调试入口 |
 
-## Add your account
+## 添加账号
 
-### Browser login (recommended)
+### 浏览器登录（推荐）
 
 ```bash
-npm run login               # auto mode
-npm run login -- --attach   # current browser tab only
+npm run login               # 自动模式
+npm run login -- --attach   # 只用当前浏览器的新标签页
 ```
 
-To use your **current browser** — the only mode that reuses an existing session, so you may not have to log in at all:
+想直接用**当前浏览器**——这是唯一能复用已有登录态的模式，往往一步都不用点：
 
-1. Open `chrome://inspect/#remote-debugging` in Chrome or Edge 144+.
-2. Enable remote debugging and accept the prompt.
-3. Press "打开登录" in the console.
+1. 地址栏打开 `chrome://inspect/#remote-debugging`（Chrome / Edge 144+）
+2. 勾选允许远程调试并确认弹窗
+3. 回控制台点「打开登录」
 
-The proxy reads `DevToolsActivePort` from the browser's User Data directory, connects to the random port over the browser-level WebSocket, and opens a new tab with `Target.createTarget`.
+代理会读浏览器 User Data 目录下的 `DevToolsActivePort` 拿到随机端口，直连 browser 级 WebSocket，用 `Target.createTarget` 开新标签页。
 
-> ⚠️ While the debugging toggle is on, local programs can read that browser's cookies. Turn it off when you are done. Cookies are encrypted at rest with App-Bound Encryption and are readable only by the browser itself, which is why CDP is the only workable automation path.
+> ⚠️ 调试开关打开期间，本机程序能读到该浏览器的 Cookie，用完关掉即可。Cookie 在本地用 App-Bound Encryption 加密，只有浏览器自己能读——这也是唯一可行的自动化路径。
 
-If the toggle is unavailable, the proxy falls back to a dedicated window with a throwaway profile, where you log in normally. The window closes itself once the account is captured.
+没有这个开关时，代理会回退到独立窗口（一次性 profile），你在里面正常登录，抓到账号后窗口自动关闭。
 
-### Manual import
+### 手动导入
 
-An account needs `uin` and `skey`.
+账号需要 `uin` 和 `skey`。
 
 ```bash
 curl -X POST http://127.0.0.1:8787/accounts \
@@ -186,24 +181,24 @@ curl -X POST http://127.0.0.1:8787/accounts \
   -d '{"accounts":[{"cookie":"uin=o123456789; skey=YOUR_SKEY"}]}'
 ```
 
-| Input | Example |
+| 格式 | 示例 |
 | --- | --- |
-| Cookie header | `uin=o123; skey=...; qcmainCSRFToken=...` |
-| Browser cookie JSON | `[{"domain":".cloud.tencent.com","name":"uin","value":"o123"}]` |
-| Netscape file | `npm run import -- cookies.txt` |
-| Line format | `123 YOUR_SKEY` |
+| Cookie 请求头 | `uin=o123; skey=...; qcmainCSRFToken=...` |
+| 浏览器 Cookie JSON | `[{"domain":".cloud.tencent.com","name":"uin","value":"o123"}]` |
+| Netscape 文件 | `npm run import -- cookies.txt` |
+| 文本行 | `123 YOUR_SKEY` |
 
-In `remote` mode add `-H "Authorization: Bearer <admin key>"` to the curl above.
+以上 curl 在 `remote` 模式下还要加 `-H "Authorization: Bearer <admin key>"`。
 
-`POST /accounts` adds or updates by UIN. `PUT /accounts` replaces the pool. `GET /accounts` returns identifiers and health only. `DELETE /accounts/<uin>` removes one account (`o` prefix optional). The `data/` directory is gitignored.
+`POST /accounts` 按 UIN 新增或更新，`PUT /accounts` 替换整个池，`GET /accounts` 只返回编号和状态，`DELETE /accounts/<uin>` 删除一个账号（`o` 前缀可省略）。`data/` 不会进入 Git。
 
-## Use it
+## 调用
 
 ```bash
 curl http://127.0.0.1:8787/v1/chat/completions \
   -H "content-type: application/json" \
   -H "Authorization: Bearer sk-orca-YOUR_KEY" \
-  -d '{"model":"hunyuan-turbos","messages":[{"role":"user","content":"Write a function that counts JavaScript files."}]}'
+  -d '{"model":"hunyuan-turbos","messages":[{"role":"user","content":"写一个统计 JavaScript 文件数量的函数。"}]}'
 ```
 
 ```js
@@ -216,60 +211,60 @@ const client = new OpenAI({
 
 const result = await client.chat.completions.create({
   model: "hunyuan-turbos",
-  messages: [{ role: "user", content: "Hello" }],
+  messages: [{ role: "user", content: "你好" }],
 });
 ```
 
-The model must be enabled for the selected upstream account. `GET /v1/models` lists the identifiers known to this proxy; `POST /models/probe` tells you which of them actually work.
+所选上游账号必须有该模型的使用权限。`GET /v1/models` 返回代理认识的模型标识，`POST /models/probe` 告诉你哪些真的能用。
 
-Every `/v1/*` request needs the API key (`Authorization: Bearer <key>` or `x-api-key`); without it you get 401 `缺少或无效的 API key`. Copy the key from the console's "访问密钥" section.
+所有 `/v1/*` 请求都必须带 API key（`Authorization: Bearer <key>` 或 `x-api-key`），没带返回 401 `缺少或无效的 API key`。key 在控制台「访问密钥」里复制。
 
-## API
+## 接口
 
-| Method | Path | Description |
+| 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `GET` | `/health` | Process, mode, account count, browser, active logins |
-| `GET` | `/auth/status` | Mode, whether an admin key is required, whether this request is authorized |
-| `POST` | `/auth/login` | Verify the admin key |
-| `GET` | `/config` | Mode and API keys (admin only) |
-| `POST` | `/config/keys` | Create an API key |
-| `PATCH` | `/config/keys/:id` | Disable or enable an API key |
-| `DELETE` | `/config/keys/:id` | Delete an API key |
-| `GET` | `/v1/models` | Known model identifiers |
-| `POST` | `/v1/chat/completions` | OpenAI-compatible chat request |
-| `POST` | `/login` | Open a browser login, returns a job id |
-| `GET` | `/login` | Active login jobs |
-| `GET` | `/login/:id` | Poll a login job |
-| `DELETE` | `/login/:id` | Cancel a login and close the tab/window |
-| `GET` | `/usage` | Local usage stats and model availability |
-| `POST` | `/models/probe` | Probe per-model permissions |
-| `GET` | `/accounts` | Sanitized account list |
-| `POST` | `/accounts` | Add or update accounts |
-| `PUT` | `/accounts` | Replace all accounts |
-| `DELETE` | `/accounts/:uin` | Remove one account |
+| `GET` | `/health` | 进程、模式、账号数、浏览器、进行中的登录 |
+| `GET` | `/auth/status` | 当前模式、是否需要 admin key、当前请求是否已授权 |
+| `POST` | `/auth/login` | 校验 admin key |
+| `GET` | `/config` | 模式与 API key 列表（需 admin 鉴权） |
+| `POST` | `/config/keys` | 新建 API key |
+| `PATCH` | `/config/keys/:id` | 停用 / 启用某个 API key |
+| `DELETE` | `/config/keys/:id` | 删除某个 API key |
+| `GET` | `/v1/models` | 已知模型标识 |
+| `POST` | `/v1/chat/completions` | OpenAI 兼容聊天请求 |
+| `POST` | `/login` | 打开浏览器登录，返回任务 id |
+| `GET` | `/login` | 进行中的登录任务 |
+| `GET` | `/login/:id` | 查询登录任务进度 |
+| `DELETE` | `/login/:id` | 取消登录并关闭标签页 / 窗口 |
+| `GET` | `/usage` | 本地用量统计与模型可用性 |
+| `POST` | `/models/probe` | 探测账号对各模型的权限 |
+| `GET` | `/accounts` | 脱敏后的账号列表 |
+| `POST` | `/accounts` | 新增或更新账号 |
+| `PUT` | `/accounts` | 替换全部账号 |
+| `DELETE` | `/accounts/:uin` | 删除一个账号 |
 
-The machine-readable description is in [openapi.json](openapi.json).
+机器可读描述位于 [openapi.json](openapi.json)。
 
-## How a request moves
+## 请求流程
 
-1. The OpenAI-style message list is split into priority instructions and user input.
-2. The next enabled account is selected and its Tencent Cloud CSRF value is calculated from `skey`.
-3. The proxy calls the LightAI chat endpoint with that account's cookie.
-4. Incremental SSE content is assembled; plain-text `[ERROR]` frames abort with the upstream message.
-5. Completion JSON becomes the visible answer. A review action becomes `[模型请求执行工具 ...]`.
-6. The result is returned as JSON or OpenAI-compatible SSE, and the request is counted locally.
+1. OpenAI 消息被分成高优先级指令和用户输入。
+2. 选择下一个可用账号，用 `skey` 算出腾讯云 CSRF 值。
+3. 代理携带该账号的 Cookie 调用 LightAI 聊天接口。
+4. 增量 SSE 内容被组装；遇到纯文本 `[ERROR]` 帧立即中止并透出上游原文。
+5. 完成 JSON 收成可见回答；工具审查动作收成 `[模型请求执行工具 ...]`。
+6. 结果按 JSON 或 OpenAI 兼容 SSE 返回，同时计入本地用量。
 
-## Limitations
+## 限制
 
-- Upstream conversation state remains tied to the selected account. Local history is sent as a new request.
-- Model availability, quota, and account enforcement are controlled upstream and cannot be queried; only local accounting is available.
-- The proxy never executes a requested tool. It only reports the request.
-- A persona override is forwarded, but a model can still fail to follow it; conflicting default-identity replies are retried.
+- 上游会话状态仍属于被选中的账号。本地历史会作为一次新请求发送。
+- 模型可用性、额度和账号校验由上游决定且无法查询，代理只能做本地记账。
+- 代理不会执行模型请求的工具，只会把请求显示出来。
+- 人设覆盖会被转发，但模型仍可能不遵守；与指定身份冲突的默认身份回复会自动重试。
 
-## Development
+## 开发
 
 ```bash
 npm test
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [MIT](LICENSE).
+贡献约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，使用 [MIT](LICENSE) 许可证。
