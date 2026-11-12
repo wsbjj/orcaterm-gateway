@@ -242,3 +242,9 @@ npm test
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [MIT](LICENSE).
+
+## Acknowledgements
+
+This project started from [Huang-404-Q/orcaterm-proxy](https://github.com/Huang-404-Q/orcaterm-proxy). Thanks to **Huang-404-Q** for the foundation — the original proxy proved that the assistant inside OrcaTerm could be reached from an outside client at all, which is what made everything after it possible.
+
+The original is MIT licensed, and this project stays on the same terms; the original copyright notice is kept in [LICENSE](LICENSE).

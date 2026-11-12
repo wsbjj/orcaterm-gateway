@@ -240,3 +240,9 @@ npm test
 ```
 
 贡献约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，使用 [MIT](LICENSE) 许可证。
+
+## 致谢
+
+本项目起步于 [Huang-404-Q/orcaterm-proxy](https://github.com/Huang-404-Q/orcaterm-proxy)。感谢原作者 **Huang-404-Q** 打下的基础——最初那一版代理把「OrcaTerm 里的助手能不能被外面的客户端调用」这件事跑通了，后面的工作才有立足点。
+
+原项目以 MIT 协议发布，本项目沿用同一协议，版权声明一并保留在 [LICENSE](LICENSE) 中。
