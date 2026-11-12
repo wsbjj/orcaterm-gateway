@@ -89,6 +89,15 @@ export class UsageStore {
     await rename(temporary, file);
   }
 
+  /** 取消待执行的防抖写入并立刻落盘，进程被 SIGTERM 时用。 */
+  async flush() {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    await this.save();
+  }
+
   snapshot() {
     const today = this.data.days[dayKey()] || { requests: 0, errors: 0, promptChars: 0, completionChars: 0 };
     return {

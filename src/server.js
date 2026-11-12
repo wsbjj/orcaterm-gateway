@@ -13,7 +13,12 @@ import { assistantUrl, readUpstreamError, upstreamFailure, upstreamHeaders } fro
 import { pathToFileURL } from "node:url";
 
 const PORT = Number(process.env.PORT || 8787);
-const HOST = process.env.HOST || "127.0.0.1";
+/** 容器和 PaaS（Railway / Render / Fly / Cloud Run）必须绑 0.0.0.0，否则平台探活连不上。 */
+const ON_PAAS = ["RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "RENDER", "FLY_APP_NAME", "K_SERVICE"]
+  .some((name) => Boolean(process.env[name]));
+const HOST = process.env.HOST || (ON_PAAS ? "0.0.0.0" : "127.0.0.1");
+/** 云上跑没有浏览器，浏览器登录只能关掉，否则用户点了只会等到超时。 */
+const BROWSER_LOGIN = String(process.env.ORCA_BROWSER_LOGIN || "on").toLowerCase() !== "off";
 const ACCOUNTS_FILE = process.env.ACCOUNTS_FILE || new URL("../data/accounts.json", import.meta.url);
 const USAGE_FILE = process.env.USAGE_FILE || new URL("../data/usage.json", import.meta.url);
 const CONFIG_FILE = process.env.CONFIG_FILE || new URL("../data/config.json", import.meta.url);
@@ -260,6 +265,7 @@ export function createApp(pool, logins = new LoginManager(pool), usage = new Usa
           mode: config.mode,
           accounts: pool.list().length,
           browser,
+          browserLogin: BROWSER_LOGIN,
           logins: logins.active().length,
         });
       }
@@ -285,6 +291,15 @@ export function createApp(pool, logins = new LoginManager(pool), usage = new Usa
         return sendJson(response, 405, { error: { message: "不支持的方法" } });
       }
       if (request.method === "POST" && url.pathname === "/login") {
+        if (!BROWSER_LOGIN) {
+          return sendJson(response, 501, {
+            error: {
+              message: "这个部署没有浏览器，无法用浏览器登录。请改用 POST /accounts 导入 cookie，或部署时设置 ORCA_ACCOUNTS 环境变量。",
+              type: "not_supported_error",
+              code: "browser_login_disabled",
+            },
+          });
+        }
         const body = await readBody(request);
         const mode = ["auto", "attach", "launch"].includes(body.mode) ? body.mode : "auto";
         const job = logins.start({
@@ -356,6 +371,17 @@ process.on("unhandledRejection", (error) => {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const pool = new AccountPool(ACCOUNTS_FILE);
   await pool.load();
+  // 云端没有浏览器可用，账号只能从环境变量种进去；
+  // 只在账号池为空时导入，避免每次重启把面板里的手动改动盖掉。
+  const seed = String(process.env.ORCA_ACCOUNTS || "").trim();
+  if (seed && !pool.list().length) {
+    try {
+      const imported = await pool.add(seed);
+      console.log(`已从 ORCA_ACCOUNTS 导入 ${imported.length} 个账号`);
+    } catch (error) {
+      console.error(`ORCA_ACCOUNTS 导入失败：${error.message}`);
+    }
+  }
   const usage = new UsageStore(USAGE_FILE);
   await usage.load();
   const config = new ConfigStore(CONFIG_FILE);
@@ -368,10 +394,31 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       console.error(`proxy failed: ${error.message}`);
       process.exit(1);
     });
+    // 容器重建时平台先发 SIGTERM，用量统计有 1 秒防抖，不刷盘就丢。
+    // 顺序很关键：先落盘再关服务，否则 close 回调里的 exit 会抢在写文件前面。
+    let closing = false;
+    const shutdown = async (signal) => {
+      if (closing) return;
+      closing = true;
+      console.log(`收到 ${signal}，正在关闭…`);
+      const hardExit = setTimeout(() => {
+        server.closeAllConnections?.();
+        process.exit(0);
+      }, 5000);
+      hardExit.unref();
+      try { await usage.flush(); } catch (error) { console.error(`用量写入失败：${error.message}`); }
+      server.close(() => {
+        clearTimeout(hardExit);
+        process.exit(0);
+      });
+    };
+    process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
+    process.on("SIGINT", () => { void shutdown("SIGINT"); });
     server.listen(PORT, HOST, () => {
       console.log(`OrcaTerm proxy listening on http://${HOST}:${PORT}`);
       console.log(`accounts: ${pool.list().length}`);
       console.log(`mode: ${config.mode}${config.requiresAdminKey() ? "（控制台需要 admin key）" : "（仅本机可用，无需 admin key）"}`);
+      if (!BROWSER_LOGIN) console.log("浏览器登录：已禁用（没有图形界面，用 POST /accounts 或 ORCA_ACCOUNTS 导入）");
       if (config.generatedAdminKey) console.log(`已生成 admin key：${config.adminKey}   （保存在 ${config.path()}）`);
       if (config.generatedApiKey) console.log(`已生成 API key：${config.apiKeys[0].key}`);
       console.log(`config: ${config.path()}`);

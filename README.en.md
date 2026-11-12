@@ -120,9 +120,24 @@ The proxy listens on [http://127.0.0.1:8787](http://127.0.0.1:8787). Open the sa
 | `CONFIG_FILE` | `data/config.json` | Mode, admin key, API keys |
 | `ORCA_MODE` | from config | Override mode: `local` / `remote` |
 | `ORCA_ADMIN_KEY` | from config | Pin the admin key instead of generating one |
+| `ORCA_API_KEY` | empty | Pin the `/v1/*` API key (comma-separated for several); survives redeploys without a volume |
+| `ORCA_ACCOUNTS` | empty | Seed accounts when the pool is empty (cookie header / `uin skey` lines / JSON) |
+| `ORCA_BROWSER_LOGIN` | `on` | Set to `off` to disable browser login (no browser in containers) |
 | `INJECT_SYSTEM` | empty | Text prepended to priority instructions |
 | `CHROME_PATH` | auto-detected | Chrome / Edge / Chromium executable |
 | `CHROME_DEBUG_URL` | `http://127.0.0.1:9222` | Extra debug endpoint to try in attach mode |
+
+### Deploying to Railway
+
+The `dev-railway` branch ships what a container deploy needs: `Dockerfile` (zero dependencies, no `npm install`), `railway.json` (health check on `/health`), and `.env.example`. Step-by-step guide: [docs/railway.md](docs/railway.md).
+
+Three things matter:
+
+1. **Mount a Volume at `/data`** — otherwise accounts, usage, and API keys are wiped on every redeploy.
+2. **Set `ORCA_ADMIN_KEY` and `ORCA_API_KEY`** — otherwise keys are regenerated on each deploy and you have to dig them out of the logs.
+3. **Import accounts via `ORCA_ACCOUNTS` or the console** — there is no browser in the container, `/login` returns 501.
+
+The image already sets `HOST=0.0.0.0`, `ORCA_MODE=remote`, and `ORCA_BROWSER_LOGIN=off`.
 
 ## Add your account
 

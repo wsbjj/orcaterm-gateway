@@ -355,6 +355,12 @@ async function loadHealth() {
     const data = await api("/health");
     badge.className = "badge";
     badge.innerHTML = '<span class="dot"></span>运行中';
+    if (data.browserLogin === false) {
+      const btn = $("#btnLogin");
+      btn.disabled = true;
+      btn.textContent = "不可用";
+      btn.title = "这个部署没有浏览器，请用下面的「账号池」导入 cookie，或在 ORCA_ACCOUNTS 里配置";
+    }
   } catch (error) {
     badge.className = "badge bad";
     badge.innerHTML = '<span class="dot"></span>服务异常';

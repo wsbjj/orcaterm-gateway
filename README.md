@@ -118,9 +118,24 @@ npm start
 | `CONFIG_FILE` | `data/config.json` | 模式、admin key、API key |
 | `ORCA_MODE` | 取配置文件 | 覆盖模式：`local` / `remote` |
 | `ORCA_ADMIN_KEY` | 取配置文件 | 固定 admin key，不再自动生成 |
+| `ORCA_API_KEY` | 空 | 固定 `/v1/*` 用的 API key，逗号分隔可给多个；容器里重新部署不换 key |
+| `ORCA_ACCOUNTS` | 空 | 账号池为空时从这里导入账号（Cookie 头 / `uin skey` 行 / JSON） |
+| `ORCA_BROWSER_LOGIN` | `on` | 设成 `off` 关掉浏览器登录（容器里没有浏览器） |
 | `INJECT_SYSTEM` | 空 | 加到高优先级指令前面的文本 |
 | `CHROME_PATH` | 自动查找 | Chrome / Edge / Chromium 可执行文件 |
 | `CHROME_DEBUG_URL` | `http://127.0.0.1:9222` | attach 模式额外尝试的调试入口 |
+
+### 部署到 Railway
+
+`dev-railway` 分支带好了容器部署要的东西：`Dockerfile`（零依赖，不需要 `npm install`）、`railway.json`（健康检查走 `/health`）、`.env.example`（变量模板）。完整步骤见 [docs/railway.md](docs/railway.md)。
+
+三件事必须做对：
+
+1. **挂一个 Volume 到 `/data`** —— 不挂的话账号、用量、API key 每次重新部署全清。
+2. **设 `ORCA_ADMIN_KEY` 和 `ORCA_API_KEY`** —— 不然 key 每次部署随机生成，只能去日志里翻。
+3. **用 `ORCA_ACCOUNTS` 或控制台导入账号** —— 云端没浏览器，`/login` 直接返回 501。
+
+容器里默认 `HOST=0.0.0.0`、`ORCA_MODE=remote`、`ORCA_BROWSER_LOGIN=off`，都是 `Dockerfile` 里的 `ENV`，不用重复设。
 
 ## 添加账号
 

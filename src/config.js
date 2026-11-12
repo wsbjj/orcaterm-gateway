@@ -44,6 +44,15 @@ function newApiKey(name = "default") {
 }
 
 /**
+ * ORCA_API_KEY / ORCA_API_KEYS（逗号或空白分隔）把调用 key 钉死。
+ * 容器没有持久卷时，config.json 每次重建都会换 key，客户端就得跟着改一遍。
+ */
+function pinnedApiKeys() {
+  const raw = String(process.env.ORCA_API_KEYS || process.env.ORCA_API_KEY || "");
+  return [...new Set(raw.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean))];
+}
+
+/**
  * data/config.json:
  *   mode      local | remote
  *   adminKey  remote 模式下进入控制台要用的 key，留空则自动生成
@@ -92,6 +101,11 @@ export class ConfigStore {
       : [];
 
     let dirty = !raw || !MODES.includes(raw?.mode);
+    for (const key of pinnedApiKeys()) {
+      if (this.apiKeys.some((item) => item.key === key)) continue;
+      this.apiKeys.push({ ...newApiKey("env"), key });
+      dirty = true;
+    }
     if (!this.apiKeys.length) {
       this.apiKeys.push(newApiKey());
       this.generatedApiKey = true;

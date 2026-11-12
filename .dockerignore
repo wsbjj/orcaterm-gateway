@@ -1,0 +1,15 @@
+.git
+.gitignore
+.workbuddy
+.github
+node_modules
+data
+tmp
+test
+docs
+*.log
+*.md
+evidence-*.json
+start-proxy.ps1
+.env
+.env.*

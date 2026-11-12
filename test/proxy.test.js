@@ -184,6 +184,47 @@ test("generates an api key on first run and only requires an admin key in remote
   }
 });
 
+test("pins the api key from ORCA_API_KEY so a redeploy keeps the same credential", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "orcaterm-envkey-"));
+  const saved = process.env.ORCA_API_KEY;
+  process.env.ORCA_API_KEY = "sk-orca-railway-fixed";
+  try {
+    const file = join(dir, "config.json");
+    const first = new ConfigStore(file);
+    await first.load();
+    assert.ok(first.verifyApiKey("sk-orca-railway-fixed"));
+    assert.equal(first.generatedApiKey, false);
+
+    const second = new ConfigStore(file);
+    await second.load();
+    assert.ok(second.verifyApiKey("sk-orca-railway-fixed"));
+    assert.equal(second.apiKeys.filter((item) => item.key === "sk-orca-railway-fixed").length, 1);
+
+    const parsed = JSON.parse(await readFile(file, "utf8"));
+    assert.equal(parsed.apiKeys[0].key, "sk-orca-railway-fixed");
+  } finally {
+    if (saved === undefined) delete process.env.ORCA_API_KEY;
+    else process.env.ORCA_API_KEY = saved;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("flushes debounced usage writes before the process exits", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "orcaterm-flush-"));
+  try {
+    const file = join(dir, "usage.json");
+    const store = new UsageStore(file);
+    await store.load();
+    store.record({ account: "1", model: "m", promptChars: 3, ok: true });
+    await store.flush();
+    const saved = JSON.parse(await readFile(file, "utf8"));
+    assert.equal(saved.total.requests, 1);
+    assert.equal(saved.byModel.m.requests, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("guards the console behind the admin key and /v1 behind the api key", async () => {
   const dir = await mkdtemp(join(tmpdir(), "orcaterm-auth-"));
   const config = new ConfigStore(join(dir, "config.json"));
