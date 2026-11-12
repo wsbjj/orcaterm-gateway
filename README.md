@@ -33,15 +33,9 @@ OpenAI 客户端  ->  localhost:8787  ->  账号池  ->  LightAI
 - 双密钥访问控制：admin key 管管理面，API key 管 `/v1/*`。
 - 空响应和网关错误最多重试三次；确定性失败不重试。
 
-### 浏览器登录
+### 一键浏览器登录
 
-点一下按钮，驱动真实浏览器完成登录，代理自己把会话抓下来。
-
-| 文件 | 作用 |
-| --- | --- |
-| `src/browser.js` | 跨平台查找 Chrome / Edge / Chromium / Brave（可用 `CHROME_PATH` 覆盖）。用 Node 原生 WebSocket 连 CDP，每条指令都带超时。读 Cookie 有四级降级，成功一次就缓存该通道：页面级 `Network.getCookies` → 浏览器级 `Storage.getCookies` → 页面级 `Storage.getCookies` → 浏览器级 `Network.getAllCookies`。 |
-| `src/login.js` | `LoginManager`：三种模式、每次登录用独立临时 profile、任务状态轮询、容错重试，以及全流程日志（stdout 打 `[login:xxxxxxxx] …`）。同名 Cookie 按域精确度去重，`.cloud.tencent.com` 会盖掉过期的 `.tencent.com`。 |
-| `src/open-login.js` | `npm run login` 重写。旧版本硬编码 `D:\workplace\…\chrome.exe`，而且根本没有读取 Cookie 的逻辑。 |
+点一下按钮，驱动真实浏览器完成登录，代理自己把会话抓下来。不用开 DevTools，不用手工复制 Cookie。
 
 三种模式，控制台可选，命令行用 `--attach` / `--launch`：
 
@@ -53,18 +47,17 @@ OpenAI 客户端  ->  localhost:8787  ->  账号池  ->  LightAI
 
 `attach` 走两条路：经典的 `--remote-debugging-port`，或者——因为 **Chrome 136+ 已静默忽略默认 profile 的该参数**——浏览器自带的 `chrome://inspect/#remote-debugging` 开关。后者的端口是随机的，代理从浏览器 User Data 目录下的 `DevToolsActivePort` 文件里读出来。`attach` 模式只开一个标签页，抓完 Cookie 只关这个标签页，不动你的浏览器；`launch` 模式用一次性 profile，完全不碰日常登录态。
 
-新增接口：`POST /login`、`GET /login`、`GET /login/:id`、`DELETE /login/:id`。`GET /health` 现在还会返回探测到的浏览器路径。
+同名 Cookie 按域精确度去重，`.cloud.tencent.com` 会盖掉过期的 `.tencent.com`。整条流程有状态轮询和失败重试，全程日志打在 stdout。
 
-### 用量记账与模型权限
+接口：`POST /login`、`GET /login`、`GET /login/:id`、`DELETE /login/:id`。
 
-上游**没有任何额度 / 余额 / 用量接口**——`/assistant/quota`、`/assistant/usage`、`/assistant/balance`、`/assistant/user`、`/assistant/models`、`/assistant/config`、`/assistant/stream/status` 全部返回 `code: 404`。所以只能本地记账。
+### 用量统计与模型权限
 
-| 文件 | 作用 |
-| --- | --- |
-| `src/usage.js` | `UsageStore`：请求数、失败数、字符数，按 总计 / 模型 / 账号 / 日期 分组，持久化到 `data/usage.json`，写盘有 1 秒防抖。 |
-| `src/probe.js` | `probeModel`：给每个模型发一次极小请求，确认该账号有没有权限。 |
+上游不提供额度、余额或用量接口，所以用量在本地记账：请求数、失败数、字符数，按总计 / 模型 / 账号 / 日期四个维度分组，持久化到 `data/usage.json`，写盘带 1 秒防抖。
 
-新增接口：`GET /usage`、`POST /models/probe`。
+模型权限按账号区分，同一账号能用哪些模型需要实测。控制台的「探测模型权限」会给每个模型发一次极小请求，直接给出结果。
+
+接口：`GET /usage`、`POST /models/probe`。
 
 ### 访问控制：admin key 与 API key
 
@@ -94,27 +87,6 @@ OpenAI 客户端  ->  localhost:8787  ->  账号池  ->  LightAI
 - 「访问密钥」顶部直接显示当前**接口地址**，跟着你的访问方式走：用 `127.0.0.1`、局域网 IP 还是反代域名打开控制台，显示的 `baseURL` 就是那个，点「复制」直接可用。
 
 > 忘了 admin key 就直接看 `data/config.json` 里的 `adminKey` 字段。
-
-## 修掉的 Bug
-
-| 现象 | 原因 | 修法 |
-| --- | --- | --- |
-| 所有上游失败都显示「上游返回空内容」 | 上游报错是**纯文本** SSE 帧（`data: [ERROR]: [LLM_ERROR]: 401 …`），`parseSseBlock` 解析成 `null` 后被直接跳过 | `sseErrorMessage()` 把文本透出来；这类错误标记 `noRetry`，不再无意义重试三次 |
-| 代理重启后账号失效 | `pool.save()` 只写 `id/uin/skey/p_skey`，把 `qcmainCSRFToken`、`qcloud_uid`、`language` 丢了 | `extraCookies` 一并持久化，加载时还原 |
-| `DELETE /accounts/o<uin>` 返回 404 | UIN 会被归一化（去掉前导 `o`），存下的 id 永远对不上文档里的路径 | `pool.remove()` 同时匹配 id、原始 uin、归一化 uin |
-| 账号格式错误返回 500 | 解析异常没设状态码 | 解析失败（含 JSON 非法）统一返回 400 |
-| `GET /upstream/status` 一直失败 | 它调的 `/assistant/stream/status` 上游根本不存在 | 删除该路由 |
-| 控制台隐藏的区块仍然显示 | `.login { display: flex }` 覆盖了 `hidden` 属性 | `[hidden] { display: none !important }` |
-
-`npm test` 覆盖 12 个用例。
-
-## 上游到底要什么
-
-实测结论，不是推测：
-
-- **不需要 `p_skey`。** 腾讯云已不再下发。会话是 `.cloud.tencent.com` 下的 `uin` + `skey`，外加 `qcmainCSRFToken`、`qcloud_uid`、`language`。把一个真实浏览器的 Cookie 全量导出，里面没有任何 `p_skey`。`skey` 单独就够用；有 `p_skey` 时会一并发送。
-- **模型权限因账号而异。** 同一个账号对 `hy3`、`hunyuan-lite` 返回 `401 token无访问此模型权限`，对 `hunyuan-turbos`、`deepseek-chat`、`glm-4.7`、`qwen3` 正常。用控制台的「探测模型权限」按钮测你自己的账号。
-- **OAuth 授权链接不能手工拼。** `state` 由服务端签发且一次性，过期或自己生成的都会停在 `{"code":"STATE_EXPIRED"}`。默认登录地址是 OrcaTerm 终端页，让应用自己发起流程。
 
 ## 为什么需要它
 

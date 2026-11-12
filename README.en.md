@@ -35,15 +35,9 @@ OpenAI client  ->  localhost:8787  ->  account pool  ->  LightAI
 - Dual-key access control: admin key for the management surface, API key for `/v1/*`.
 - Empty responses and gateway failures retry up to three times; deterministic failures do not.
 
-### Browser login
+### One-click browser login
 
-A one-click login flow that drives a real browser and captures the session itself.
-
-| File | What it does |
-| --- | --- |
-| `src/browser.js` | Finds Chrome / Edge / Chromium / Brave per platform (`CHROME_PATH` overrides). Speaks CDP over Node's native WebSocket client with a timeout on every command. Reads cookies through four fallbacks, caching whichever one works: page-level `Network.getCookies` → browser-level `Storage.getCookies` → page-level `Storage.getCookies` → browser-level `Network.getAllCookies`. |
-| `src/login.js` | `LoginManager`: three modes, a throwaway profile per launch, job state polling, transient-failure tolerance, and lifecycle logging (`[login:xxxxxxxx] …` on stdout). De-duplicates same-name cookies by domain precision, so `.cloud.tencent.com` wins over a stale `.tencent.com` copy. |
-| `src/open-login.js` | `npm run login` rewritten. The old version hard-coded `D:\workplace\…\chrome.exe` and never actually read a cookie. |
+Press a button and the proxy drives a real browser through the login, then captures the session itself. No DevTools, no hand-copied cookies.
 
 Three modes, selectable in the console or via `--attach` / `--launch`:
 
@@ -55,18 +49,17 @@ Three modes, selectable in the console or via `--attach` / `--launch`:
 
 `attach` mode works two ways: the classic `--remote-debugging-port`, or — since that flag is **silently ignored for the default profile on Chrome 136+** — the `chrome://inspect/#remote-debugging` toggle, whose random port is discovered by reading `DevToolsActivePort` from the browser's User Data directory. In `attach` mode the proxy opens one tab, reads cookies, and closes only that tab; your browser stays untouched. In `launch` mode it uses a throwaway profile, so your daily session is never involved.
 
-New endpoints: `POST /login`, `GET /login`, `GET /login/:id`, `DELETE /login/:id`. `GET /health` now also reports the detected browser path.
+Same-name cookies are de-duplicated by domain precision, so `.cloud.tencent.com` wins over a stale `.tencent.com` copy. The whole flow is polled as a job with transient-failure tolerance and logged to stdout.
+
+Endpoints: `POST /login`, `GET /login`, `GET /login/:id`, `DELETE /login/:id`.
 
 ### Usage accounting and model permissions
 
-The upstream exposes **no quota, balance, or usage API** — `/assistant/quota`, `/assistant/usage`, `/assistant/balance`, `/assistant/user`, `/assistant/models`, `/assistant/config` and `/assistant/stream/status` all return `code: 404`. So accounting is local instead.
+The upstream exposes no quota, balance, or usage API, so usage is counted locally: requests, failures, and character counts grouped by total / model / account / day, persisted to `data/usage.json` with a 1 s write debounce.
 
-| File | What it does |
-| --- | --- |
-| `src/usage.js` | `UsageStore`: requests, failures, and character counts grouped by total / model / account / day, persisted to `data/usage.json` with a 1 s write debounce. |
-| `src/probe.js` | `probeModel`: sends one minimal request per model to learn whether the account is authorized for it. |
+Model permissions are per account, so you have to find out which models an account can actually use. The console's probe sends one minimal request per model and reports the result.
 
-New endpoints: `GET /usage`, `POST /models/probe`.
+Endpoints: `GET /usage`, `POST /models/probe`.
 
 ### Access control: admin key and API key
 
@@ -96,27 +89,6 @@ Two keys, two jobs:
 - The section also shows the current **base URL**, derived from however you reached the console — `127.0.0.1`, a LAN IP, or a reverse-proxied domain. One click copies it as the OpenAI SDK `baseURL`.
 
 > Lost the admin key? Read `adminKey` from `data/config.json`.
-
-## Bugs fixed
-
-| Symptom | Cause | Fix |
-| --- | --- | --- |
-| Every upstream failure showed as `上游返回空内容` | Upstream reports errors as a **plain-text** SSE frame (`data: [ERROR]: [LLM_ERROR]: 401 …`). `parseSseBlock` returned `null`, and the frame was skipped. | `sseErrorMessage()` surfaces the text; such errors are marked `noRetry` instead of being retried three times. |
-| Account stopped working after a proxy restart | `pool.save()` wrote only `id/uin/skey/p_skey`, dropping `qcmainCSRFToken`, `qcloud_uid`, `language`. | `extraCookies` are persisted and re-parsed on load. |
-| `DELETE /accounts/o<uin>` returned 404 | UINs are normalized (leading `o` stripped), so the stored id never matched the documented path. | `pool.remove()` matches id, raw uin, and normalized uin. |
-| Malformed account input returned 500 | Parse errors never set a status. | Parse failures (including invalid JSON) now return 400. |
-| `GET /upstream/status` always failed | It called `/assistant/stream/status`, which does not exist upstream. | Route removed. |
-| Hidden console sections were visible | `.login { display: flex }` overrode the `hidden` attribute. | `[hidden] { display: none !important }`. |
-
-`npm test` covers 12 cases.
-
-## What the upstream actually requires
-
-Verified against a live account, not assumed:
-
-- **`p_skey` is not needed.** Tencent Cloud no longer issues it. The session is `uin` + `skey` on `.cloud.tencent.com`, plus `qcmainCSRFToken`, `qcloud_uid`, and `language`. A full browser cookie dump contains no `p_skey` at all. `skey` alone is sufficient; `p_skey` is used if present.
-- **Model permissions are per account.** The same account returns `401 token无访问此模型权限` for `hy3` and `hunyuan-lite`, while `hunyuan-turbos`, `deepseek-chat`, `glm-4.7`, and `qwen3` work. Use the console's "探测模型权限" button to map your own account.
-- **OAuth authorize links cannot be hand-crafted.** `state` is server-issued and single-use; a stale or self-generated one ends on `{"code":"STATE_EXPIRED"}`. The default login target is the OrcaTerm terminal page so the app starts the flow itself.
 
 ## Why this exists
 
