@@ -1,5 +1,5 @@
 {
-  "name": "orcaterm-proxy",
+  "name": "orcaterm-gateway",
   "version": "0.1.0",
   "private": true,
   "type": "module",

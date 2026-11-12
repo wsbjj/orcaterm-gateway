@@ -135,8 +135,8 @@ Verified against a live account, not assumed:
 Requires Node.js 22 or newer.
 
 ```bash
-git clone https://github.com/Huang-404-Q/orcaterm-proxy.git
-cd orcaterm-proxy
+git clone https://github.com/wsbjj/orcaterm-gateway.git
+cd orcaterm-gateway
 npm start
 ```
 
