@@ -16,9 +16,15 @@ function cookieValue(cookie, name) {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+function invalid(message) {
+  const error = new Error(message);
+  error.status = 400;
+  return error;
+}
+
 export function parseAccount(input, index = 0) {
   if (!input || typeof input !== "object") {
-    throw new Error(`账号 #${index + 1} 不是对象`);
+    throw invalid(`账号 #${index + 1} 不是对象`);
   }
 
   const cookie = input.cookie || input.cookies || "";
@@ -31,13 +37,19 @@ export function parseAccount(input, index = 0) {
   const key = skey || pSkey;
 
   if (!uin || !key) {
-    throw new Error(`账号 #${index + 1} 缺少 uin 或 skey/p_skey`);
+    throw invalid(`账号 #${index + 1} 缺少 uin 或 skey/p_skey`);
   }
 
   const extraCookies = [];
   for (const name of ["qcmainCSRFToken", "qcloud_uid", "language"]) {
     const value = input[name] || cookieValue(cookieText, name);
     if (value) extraCookies.push(`${name}=${value}`);
+  }
+  if (Array.isArray(input.extraCookies)) {
+    for (const pair of input.extraCookies) {
+      const name = String(pair).split("=")[0];
+      if (name && !extraCookies.some((item) => item.startsWith(`${name}=`))) extraCookies.push(String(pair));
+    }
   }
 
   return {
@@ -60,7 +72,7 @@ function recordsFromJson(parsed) {
   if (parsed && Array.isArray(parsed.accounts)) return parsed.accounts;
   if (parsed && Array.isArray(parsed.cookies)) return [{ cookies: parsed.cookies }];
   if (parsed && (parsed.cookie || parsed.uin || parsed.skey || parsed.p_skey)) return [parsed];
-  throw new Error("无法识别 JSON 账号格式");
+  throw invalid("无法识别 JSON 账号格式");
 }
 
 function recordFromNetscape(text) {
@@ -78,14 +90,20 @@ export function parseAccounts(text) {
 
   let records;
   if (source.startsWith("[") || source.startsWith("{")) {
-    records = recordsFromJson(JSON.parse(source));
+    let parsed;
+    try {
+      parsed = JSON.parse(source);
+    } catch {
+      throw invalid("账号内容不是合法 JSON");
+    }
+    records = recordsFromJson(parsed);
   } else if (source.includes("\t") && source.includes("TRUE")) {
     records = recordFromNetscape(source);
   } else {
     records = source.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
       if (line.includes("uin=") || line.includes("skey=") || line.includes("p_skey=")) return { cookie: line };
       const parts = line.split(/[\s,|]+/);
-      if (parts.length < 2) throw new Error(`无法解析账号行: ${line}`);
+      if (parts.length < 2) throw invalid(`无法解析账号行: ${line}`);
       return { uin: parts[0], skey: parts[1], p_skey: parts[2] || "" };
     });
   }

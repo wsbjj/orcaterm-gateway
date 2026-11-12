@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseAccount, parseAccounts } from "./accounts.js";
+import { normalizeUin, parseAccount, parseAccounts } from "./accounts.js";
 
 export class AccountPool {
   constructor(file) {
@@ -44,6 +44,7 @@ export class AccountPool {
       uin: account.uin,
       skey: account.skey,
       p_skey: account.pSkey,
+      extraCookies: account.extraCookies,
       disabled: account.disabled,
     }));
     await writeFile(temporary, `${JSON.stringify(stored, null, 2)}\n`, "utf8");
@@ -70,8 +71,15 @@ export class AccountPool {
   }
 
   async remove(id) {
+    const target = String(id || "");
+    const normalized = normalizeUin(target);
     const before = this.accounts.length;
-    this.accounts = this.accounts.filter((account) => account.id !== id && account.uin !== id);
+    this.accounts = this.accounts.filter((account) => {
+      if (account.id === target) return false;
+      if (account.uin === target) return false;
+      if (normalized && account.uin === normalized) return false;
+      return true;
+    });
     if (this.accounts.length === before) return false;
     await this.save();
     return true;

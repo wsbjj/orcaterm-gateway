@@ -15,6 +15,164 @@
         }
       }
     },
+    "/auth/status": {
+      "get": {
+        "operationId": "authStatus",
+        "responses": {
+          "200": { "description": "Mode, whether an admin key is required, and whether this request is authorized" }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "operationId": "authLogin",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["key"],
+                "properties": { "key": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Admin key accepted" },
+          "401": { "description": "Admin key rejected" }
+        }
+      }
+    },
+    "/config": {
+      "get": {
+        "operationId": "getConfig",
+        "responses": {
+          "200": { "description": "Mode and API keys (requires the admin key in remote mode)" }
+        }
+      }
+    },
+    "/config/keys": {
+      "post": {
+        "operationId": "createApiKey",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Created key" }
+        }
+      }
+    },
+    "/config/keys/{id}": {
+      "patch": {
+        "operationId": "toggleApiKey",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Disable or enable a key" } }
+      },
+      "delete": {
+        "operationId": "deleteApiKey",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Key deleted" } }
+      }
+    },
+    "/login": {
+      "post": {
+        "operationId": "startLogin",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": { "type": "string" },
+                  "timeoutMs": { "type": "integer" },
+                  "fresh": { "type": "boolean" },
+                  "profile": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": { "description": "Login job started" }
+        }
+      },
+      "get": {
+        "operationId": "listLogins",
+        "responses": {
+          "200": { "description": "Active login jobs" }
+        }
+      }
+    },
+    "/login/{id}": {
+      "get": {
+        "operationId": "getLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Login job state" },
+          "404": { "description": "Unknown login job" }
+        }
+      },
+      "delete": {
+        "operationId": "cancelLogin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Cancelled" }
+        }
+      }
+    },
+    "/usage": {
+      "get": {
+        "operationId": "getUsage",
+        "responses": {
+          "200": { "description": "Local usage totals plus per-model availability" }
+        }
+      }
+    },
+    "/models/probe": {
+      "post": {
+        "operationId": "probeModels",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "models": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Per-model permission probe results" }
+        }
+      }
+    },
     "/v1/models": {
       "get": {
         "operationId": "listModels",

@@ -5,3 +5,6 @@ evidence-*.json
 data/
 tmp/
 *.log
+
+# local agent workspace data
+.workbuddy/

@@ -87,6 +87,24 @@ export function parseSseBlock(block) {
   try { return JSON.parse(data); } catch { return null; }
 }
 
+/**
+ * 上游出错时返回的是一行纯文本流：`data: [ERROR]: [LLM_ERROR]: 401 token无访问此模型权限`
+ * 以前这里被当成「解析失败」直接丢掉，用户只能看到「上游返回空内容」。
+ */
+export function sseErrorMessage(block) {
+  const data = block.split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim())
+    .join("\n")
+    .trim();
+  if (!data || !data.startsWith("[ERROR]")) return "";
+  return data
+    .replace(/^\[ERROR\]:?\s*/, "")
+    .replace(/^\[[A-Z_]+\]:\s*/, "")
+    .replace(/\s*Troubleshooting URL:\s*\S+\s*$/i, "")
+    .trim() || "上游返回错误";
+}
+
 function toolRequestText(action) {
   const tool = action?.tool || {};
   const name = [tool.mcpServer, tool.name].filter(Boolean).join("/");
