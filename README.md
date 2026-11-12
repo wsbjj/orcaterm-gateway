@@ -50,7 +50,7 @@ cd orcaterm-proxy
 npm start
 ```
 
-The proxy listens on [http://127.0.0.1:8787](http://127.0.0.1:8787).
+The proxy listens on [http://127.0.0.1:8787](http://127.0.0.1:8787). Open the same address in a browser for the built-in web console (account pool, models, and a test chat).
 
 | Variable | Default | Purpose |
 | --- | --- | --- |

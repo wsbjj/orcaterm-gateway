@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
 import { AccountPool } from "./pool.js";
 import { DEFAULT_MODEL, MODELS } from "./models.js";
 import { buildChatBody, chunkText, parseSseBlock, visibleText } from "./openai.js";
@@ -9,6 +10,7 @@ import { pathToFileURL } from "node:url";
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "127.0.0.1";
 const ACCOUNTS_FILE = process.env.ACCOUNTS_FILE || new URL("../data/accounts.json", import.meta.url);
+const WEB_INDEX = new URL("./web/index.html", import.meta.url);
 
 function sendJson(response, status, payload) {
   const body = JSON.stringify(payload);
@@ -161,10 +163,22 @@ async function handleAccounts(request, response, pool, url) {
   sendJson(response, 405, { error: { message: "不支持的方法" } });
 }
 
+async function sendWebIndex(response) {
+  const body = await readFile(WEB_INDEX, "utf8");
+  response.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  response.end(body);
+}
+
 export function createApp(pool) {
   return createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
     try {
+      if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/ui" || url.pathname === "/index.html")) {
+        return await sendWebIndex(response);
+      }
       if (request.method === "GET" && url.pathname === "/health") {
         return sendJson(response, 200, { ok: true, accounts: pool.list().length });
       }
